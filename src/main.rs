@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 use chrono::{DateTime, Local};
 use clap::Parser;
@@ -32,10 +32,11 @@ fn main() {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct Message {
-    property: &'static str,
+    property: String,
     target: TargetValue,
+    step_duration: Duration,
     start: DateTime<Local>,
     end: DateTime<Local>,
 }
@@ -48,15 +49,16 @@ impl From<&MsgOpts> for Message {
         };
         Message {
             property: match opts.property {
-                cli::GammaRelayProperty::Temperature => "Temperature",
-                cli::GammaRelayProperty::Brightness => "Brightness",
-                cli::GammaRelayProperty::Gamma => "Gamma",
+                cli::GammaRelayProperty::Temperature => String::from("Temperature"),
+                cli::GammaRelayProperty::Brightness => String::from("Brightness"),
+                cli::GammaRelayProperty::Gamma => String::from("Gamma"),
             },
             target: match opts.target_value {
                 cli::TargetValue::Undo => TargetValue::Undo,
                 cli::TargetValue::Absolute(val) => TargetValue::Absolute(val),
                 cli::TargetValue::Relative(val) => TargetValue::Relative(val),
             },
+            step_duration: Duration::from_millis(2),
             start,
             end,
         }
@@ -110,8 +112,12 @@ async fn start_engine() -> tokio::io::Result<()> {
             if let Err(e) = reader.read_line(&mut message).await {
                 return tracing::error!("Error reading stream: {e}");
             }
+            let decoded: Message = match serde_json::from_str(&message) {
+                Ok(decoded) => decoded,
+                Err(e) => return tracing::error!("Error decoding message: {e}"),
+            };
 
-            tracing::info!("Received message: {message}");
+            tracing::info!("Received message: {decoded:?}");
             if let Err(e) = writer.write_all(b"Hello from daemon").await {
                 tracing::error!("Error writing to stream: {e}")
             }
