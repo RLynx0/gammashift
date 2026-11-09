@@ -1,7 +1,6 @@
 use std::{num::ParseFloatError, str::FromStr, time::Duration};
 
 use clap::{Parser, Subcommand, ValueEnum};
-use serde::{Deserialize, Serialize};
 
 /// Transition engine for ws-gamma-relay-rs
 #[derive(Debug, Clone, Parser)]
@@ -25,14 +24,14 @@ pub enum GammaShiftCommand {
 }
 
 /// Send an instruction to a running gammashift engine
-#[derive(Debug, Clone, Parser, Serialize, Deserialize)]
+#[derive(Debug, Clone, Parser)]
 #[command(author, version, about, long_about = None)]
 pub struct MsgOpts {
     /// Property to shift.
-    property: GammaRelayProperty,
+    pub property: GammaRelayProperty,
 
     /// Target value to shift the property to.
-    target_value: TargetValue,
+    pub target_value: TargetValue,
 
     /// Duration after which the target value should be reached.
     ///
@@ -51,17 +50,17 @@ pub struct MsgOpts {
     /// - 0.5m   Half a minute
     /// - 200ms  200 milliseconds
     #[arg(short, long, default_value = "2.0 seconds", verbatim_doc_comment)]
-    time: ShiftTime,
+    pub time: ShiftTime,
 }
 
-#[derive(Debug, Clone, ValueEnum, Serialize, Deserialize)]
+#[derive(Debug, Clone, ValueEnum)]
 pub enum GammaRelayProperty {
     Temperature,
     Brightness,
     Gamma,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum TargetValue {
     Undo,
     Absolute(f64),
@@ -81,7 +80,7 @@ impl FromStr for TargetValue {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ShiftTime {
     Instant,
     Dur(Duration),

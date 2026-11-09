@@ -1,6 +1,8 @@
 use std::{io::Write, os::unix::net::UnixStream, path::PathBuf};
 
+use chrono::{DateTime, Local};
 use clap::Parser;
+use serde::{Deserialize, Serialize};
 use tokio::net::UnixListener;
 
 use crate::cli::{Cli, MsgOpts};
@@ -27,10 +29,35 @@ fn main() {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+struct Message {
+    property: &'static str,
+    start: DateTime<Local>,
+    end: DateTime<Local>,
+}
+impl From<&MsgOpts> for Message {
+    fn from(opts: &MsgOpts) -> Self {
+        let start = Local::now();
+        let end = match opts.time {
+            cli::ShiftTime::Instant => start,
+            cli::ShiftTime::Dur(d) => start + d,
+        };
+        Message {
+            property: match opts.property {
+                cli::GammaRelayProperty::Temperature => "Temperature",
+                cli::GammaRelayProperty::Brightness => "Brightness",
+                cli::GammaRelayProperty::Gamma => "Gamma",
+            },
+            start,
+            end,
+        }
+    }
+}
+
 #[tokio::main]
-async fn send_message(msg: &MsgOpts) -> tokio::io::Result<()> {
+async fn send_message(opts: &MsgOpts) -> tokio::io::Result<()> {
     let mut stream = UnixStream::connect(SOCK_FILE)?;
-    let data = serde_json::to_vec(msg)?;
+    let data = serde_json::to_vec(&Message::from(opts))?;
     stream.write_all(&data)?;
     Ok(())
 }
