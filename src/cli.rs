@@ -63,6 +63,7 @@ pub enum GammaRelayProperty {
 #[derive(Debug, Clone, Copy)]
 pub enum TargetValue {
     Undo,
+    Default,
     Absolute(f64),
     Relative(f64),
 }
@@ -72,6 +73,7 @@ impl FromStr for TargetValue {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "undo" => Ok(TargetValue::Undo),
+            "default" => Ok(TargetValue::Default),
             relative_str if matches!(relative_str.chars().next(), Some('+') | Some('-')) => {
                 relative_str.parse::<f64>().map(TargetValue::Relative)
             }

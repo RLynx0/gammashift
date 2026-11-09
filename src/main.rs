@@ -16,6 +16,10 @@ mod cli;
 
 const SOCK_FILE: &str = "/run/user/1000/gammashift/gammashift.sock";
 
+const DEFAULT_TEMPERATURE: f64 = 6500.0;
+const DEFAULT_BRIGHTNESS: f64 = 1.0;
+const DEFAULT_GAMMA: f64 = 1.0;
+
 fn main() {
     let cli = Cli::parse();
     tracing_subscriber::fmt().init();
@@ -57,6 +61,7 @@ impl From<&MsgOpts> for Message {
             },
             target: match opts.target_value {
                 cli::TargetValue::Undo => TargetValue::Undo,
+                cli::TargetValue::Default => TargetValue::Default,
                 cli::TargetValue::Absolute(val) => TargetValue::Absolute(val),
                 cli::TargetValue::Relative(val) => TargetValue::Relative(val),
             },
@@ -84,6 +89,7 @@ impl Display for GammaRelayProperty {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum TargetValue {
     Undo,
+    Default,
     Absolute(f64),
     Relative(f64),
 }
@@ -155,9 +161,14 @@ async fn start_engine() -> tokio::io::Result<()> {
             };
 
             let target = match decoded.target {
-                TargetValue::Undo => todo!("Implement Undo"),
-                TargetValue::Relative(r) => current + r,
                 TargetValue::Absolute(v) => v,
+                TargetValue::Relative(r) => current + r,
+                TargetValue::Undo => todo!("Implement Undo"),
+                TargetValue::Default => match decoded.property {
+                    GammaRelayProperty::Temperature => DEFAULT_TEMPERATURE,
+                    GammaRelayProperty::Brightness => DEFAULT_BRIGHTNESS,
+                    GammaRelayProperty::Gamma => DEFAULT_GAMMA,
+                },
             };
             let duration = Duration::from_secs_f64((decoded.end - decoded.start).as_seconds_f64());
             let response = format!(
