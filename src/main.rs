@@ -135,7 +135,13 @@ async fn start_engine() -> tokio::io::Result<()> {
             if let Err(e) = reader.read_line(&mut message).await {
                 return tracing::error!("Error reading stream: {e}");
             }
-            let decoded: Message = match serde_json::from_str(&message) {
+            let Message {
+                property,
+                target,
+                step_duration,
+                start: start_time,
+                end: end_time,
+            } = match serde_json::from_str(&message) {
                 Err(e) => return tracing::error!("Error decoding message: {e}"),
                 Ok(decoded) => decoded,
             };
@@ -149,74 +155,45 @@ async fn start_engine() -> tokio::io::Result<()> {
                 Ok(proxy) => proxy,
             };
 
-            let current = match match &decoded.property {
-                GammaRelayProperty::Brightness => gammarelay_proxy.brightness().await,
-                GammaRelayProperty::Gamma => gammarelay_proxy.gamma().await.map(|g| g as f64),
-                GammaRelayProperty::Temperature => {
-                    gammarelay_proxy.temperature().await.map(|t| t as f64)
-                }
-            } {
+            let current = match get_property(&gammarelay_proxy, &property).await {
                 Err(e) => return tracing::error!("Failed fetching current value: {e}"),
                 Ok(val) => val,
             };
 
-            let target = match decoded.target {
+            let target = match target {
                 TargetValue::Absolute(v) => v,
                 TargetValue::Relative(r) => current + r,
                 TargetValue::Undo => todo!("Implement Undo"),
-                TargetValue::Default => match decoded.property {
+                TargetValue::Default => match &property {
                     GammaRelayProperty::Temperature => DEFAULT_TEMPERATURE,
                     GammaRelayProperty::Brightness => DEFAULT_BRIGHTNESS,
                     GammaRelayProperty::Gamma => DEFAULT_GAMMA,
                 },
             };
-            let duration = Duration::from_secs_f64((decoded.end - decoded.start).as_seconds_f64());
-            let response = format!(
-                "{} : {current} -> {target} ({duration:?})",
-                decoded.property,
-            );
+            let duration = Duration::from_secs_f64((end_time - start_time).as_seconds_f64());
+            let response = format!("[STARTED] {property}: {current} -> {target} ({duration:?})");
             if let Err(e) = writer.write_all(response.as_bytes()).await {
                 return tracing::error!("Error writing to stream: {e}");
             }
             drop(writer);
-            tracing::info!(
-                "[START] {} : {current} -> {target} ({duration:?})",
-                decoded.property
-            );
+            tracing::info!("{response}");
 
             loop {
                 let now = Local::now();
-                if now > decoded.end {
-                    match match decoded.property {
-                        GammaRelayProperty::Temperature => {
-                            gammarelay_proxy.set_temperature(target as u16).await
-                        }
-                        GammaRelayProperty::Brightness => {
-                            gammarelay_proxy.set_brightness(target).await
-                        }
-                        GammaRelayProperty::Gamma => gammarelay_proxy.set_gamma(target).await,
-                    } {
+                if now > end_time {
+                    match set_property(&gammarelay_proxy, &property, target).await {
                         Err(e) => return tracing::error!("Failed to set property: {e}"),
-                        Ok(_) => {
-                            return tracing::info!("[DONE] {} -> {target}", decoded.property);
-                        }
+                        Ok(_) => return tracing::info!("[DONE] {property}:{target}"),
                     }
                 }
-                let elapsed = now - decoded.start;
+                let elapsed = now - start_time;
                 let factor = elapsed.as_seconds_f64() / duration.as_secs_f64();
                 let step_target = current + factor * (target - current);
-                if let Err(e) = match decoded.property {
-                    GammaRelayProperty::Temperature => {
-                        gammarelay_proxy.set_temperature(step_target as u16).await
-                    }
-                    GammaRelayProperty::Brightness => {
-                        gammarelay_proxy.set_brightness(step_target).await
-                    }
-                    GammaRelayProperty::Gamma => gammarelay_proxy.set_gamma(step_target).await,
-                } {
-                    return tracing::error!("Failed to set property: {e}");
+                match set_property(&gammarelay_proxy, &property, step_target).await {
+                    Err(e) => return tracing::error!("Failed to set property: {e}"),
+                    Ok(_) => tracing::debug!("[STEP] {property}:{step_target}"),
                 }
-                sleep(decoded.step_duration).await;
+                sleep(step_duration).await;
             }
         });
     }
@@ -242,4 +219,26 @@ trait GammaRelayInterface {
     fn brightness(&self) -> zbus::Result<f64>;
     #[zbus(property)]
     fn set_brightness(&self, value: f64) -> zbus::Result<()>;
+}
+
+async fn set_property<'a>(
+    gamma_relay_prox: &GammaRelayInterfaceProxy<'a>,
+    property: &GammaRelayProperty,
+    value: f64,
+) -> zbus::Result<()> {
+    match property {
+        GammaRelayProperty::Temperature => gamma_relay_prox.set_temperature(value as u16).await,
+        GammaRelayProperty::Brightness => gamma_relay_prox.set_brightness(value).await,
+        GammaRelayProperty::Gamma => gamma_relay_prox.set_gamma(value).await,
+    }
+}
+async fn get_property<'a>(
+    gamma_relay_prox: &GammaRelayInterfaceProxy<'a>,
+    property: &GammaRelayProperty,
+) -> zbus::Result<f64> {
+    match property {
+        GammaRelayProperty::Temperature => gamma_relay_prox.temperature().await.map(|t| t as f64),
+        GammaRelayProperty::Brightness => gamma_relay_prox.brightness().await,
+        GammaRelayProperty::Gamma => gamma_relay_prox.gamma().await,
+    }
 }
