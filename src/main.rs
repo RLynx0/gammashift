@@ -134,8 +134,6 @@ async fn start_engine() -> tokio::io::Result<()> {
                 Ok(decoded) => decoded,
             };
 
-            tracing::info!("Received message: {decoded:?}");
-
             let dbus_connection = match zbus::Connection::session().await {
                 Err(e) => return tracing::error!("Error establishing d-bus connection: {e}"),
                 Ok(connection) => connection,
@@ -170,9 +168,43 @@ async fn start_engine() -> tokio::io::Result<()> {
                 return tracing::error!("Error writing to stream: {e}");
             }
             drop(writer);
+            tracing::info!(
+                "[START] {} : {current} -> {target} ({duration:?})",
+                decoded.property
+            );
 
-            while Local::now() < decoded.end {
-                tracing::info!("Step!");
+            loop {
+                let now = Local::now();
+                if now > decoded.end {
+                    match match decoded.property {
+                        GammaRelayProperty::Temperature => {
+                            gammarelay_proxy.set_temperature(target as u16).await
+                        }
+                        GammaRelayProperty::Brightness => {
+                            gammarelay_proxy.set_brightness(target).await
+                        }
+                        GammaRelayProperty::Gamma => gammarelay_proxy.set_gamma(target).await,
+                    } {
+                        Err(e) => return tracing::error!("Failed to set property: {e}"),
+                        Ok(_) => {
+                            return tracing::info!("[DONE] {} -> {target}", decoded.property);
+                        }
+                    }
+                }
+                let elapsed = now - decoded.start;
+                let factor = elapsed.as_seconds_f64() / duration.as_secs_f64();
+                let step_target = current + factor * (target - current);
+                if let Err(e) = match decoded.property {
+                    GammaRelayProperty::Temperature => {
+                        gammarelay_proxy.set_temperature(step_target as u16).await
+                    }
+                    GammaRelayProperty::Brightness => {
+                        gammarelay_proxy.set_brightness(step_target).await
+                    }
+                    GammaRelayProperty::Gamma => gammarelay_proxy.set_gamma(step_target).await,
+                } {
+                    return tracing::error!("Failed to set property: {e}");
+                }
                 sleep(decoded.step_duration).await;
             }
         });
