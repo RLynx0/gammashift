@@ -1,9 +1,9 @@
-use std::path::PathBuf;
+use std::{io::Write, os::unix::net::UnixStream, path::PathBuf};
 
 use clap::Parser;
 use tokio::net::UnixListener;
 
-use crate::cli::Cli;
+use crate::cli::{Cli, MsgOpts};
 
 mod cli;
 
@@ -19,12 +19,20 @@ fn main() {
                 tracing::error!("Error starting gammashift engine: {e}")
             }
         }
-        cli::GammaShiftCommand::Msg {
-            property,
-            target_value,
-            time,
-        } => todo!(),
+        cli::GammaShiftCommand::Msg(msg) => {
+            if let Err(e) = send_message(&msg) {
+                tracing::error!("Error sending message to gammashift engine: {e}")
+            }
+        }
     }
+}
+
+#[tokio::main]
+async fn send_message(msg: &MsgOpts) -> tokio::io::Result<()> {
+    let mut stream = UnixStream::connect(SOCK_FILE)?;
+    let data = serde_json::to_vec(msg)?;
+    stream.write_all(&data)?;
+    Ok(())
 }
 
 #[tokio::main]

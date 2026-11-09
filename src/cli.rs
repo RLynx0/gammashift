@@ -1,6 +1,7 @@
 use std::{num::ParseFloatError, str::FromStr, time::Duration};
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
+use serde::{Deserialize, Serialize};
 
 /// Transition engine for ws-gamma-relay-rs
 #[derive(Debug, Clone, Parser)]
@@ -20,44 +21,47 @@ pub enum GammaShiftCommand {
         daemon: bool,
     },
 
-    /// Send an instruction to a running gammashift engine
-    #[command(author, version, about, long_about = None)]
-    Msg {
-        /// Property to shift.
-        property: GammaRelayProperty,
-
-        /// Target value to shift the property to.
-        target_value: TargetValue,
-
-        /// Duration after which the target value should be reached.
-        ///
-        /// Must be a positive float, optionally followed by a prefix.
-        /// Without a prefix, the value is treated as representing seconds.
-        ///
-        /// Supported prefixes:
-        /// - ms | milliseconds
-        /// - s  | seconds
-        /// - m  | minutes
-        ///
-        /// Examples:
-        /// - 0      Immediate
-        /// - 2s     Two seconds
-        /// - 1.5    One and a half seconds
-        /// - 0.5m   Half a minute
-        /// - 200ms  200 milliseconds
-        #[arg(short, long, default_value = "2.0 seconds", verbatim_doc_comment)]
-        time: ShiftTime,
-    },
+    Msg(MsgOpts),
 }
 
-#[derive(Debug, Clone, clap::ValueEnum)]
+/// Send an instruction to a running gammashift engine
+#[derive(Debug, Clone, Parser, Serialize, Deserialize)]
+#[command(author, version, about, long_about = None)]
+pub struct MsgOpts {
+    /// Property to shift.
+    property: GammaRelayProperty,
+
+    /// Target value to shift the property to.
+    target_value: TargetValue,
+
+    /// Duration after which the target value should be reached.
+    ///
+    /// Must be a positive float, optionally followed by a prefix.
+    /// Without a prefix, the value is treated as representing seconds.
+    ///
+    /// Supported prefixes:
+    /// - ms | milliseconds
+    /// - s  | seconds
+    /// - m  | minutes
+    ///
+    /// Examples:
+    /// - 0      Immediate
+    /// - 2s     Two seconds
+    /// - 1.5    One and a half seconds
+    /// - 0.5m   Half a minute
+    /// - 200ms  200 milliseconds
+    #[arg(short, long, default_value = "2.0 seconds", verbatim_doc_comment)]
+    time: ShiftTime,
+}
+
+#[derive(Debug, Clone, ValueEnum, Serialize, Deserialize)]
 pub enum GammaRelayProperty {
     Temperature,
     Brightness,
     Gamma,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TargetValue {
     Undo,
     Absolute(f64),
@@ -77,7 +81,7 @@ impl FromStr for TargetValue {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ShiftTime {
     Instant,
     Dur(Duration),
@@ -86,7 +90,7 @@ impl FromStr for ShiftTime {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut s_chars = s.chars();
+        let s_chars = s.chars();
         let number_part = s_chars
             .take_while(|c| c.is_numeric() || ['.', '-', '+'].contains(c))
             .collect::<String>();
@@ -95,10 +99,10 @@ impl FromStr for ShiftTime {
         }
         let number_value = number_part.parse::<f64>().map_err(|e| e.to_string())?;
         if number_value < 0.0 {
-            return Err(format!("Shift duration cannot be less than 0"));
+            return Err("Shift duration cannot be less than 0".to_string());
         }
 
-        match (&s[number_part.len()..]).trim() {
+        match s[number_part.len()..].trim() {
             "ms" | "milliseconds" => Ok(ShiftTime::Dur(Duration::from_millis(number_value as u64))),
             "s" | "seconds" | "" => Ok(ShiftTime::Dur(Duration::from_secs_f64(number_value))),
             "m" | "minutes" => Ok(ShiftTime::Dur(Duration::from_secs_f64(number_value * 60.0))),
