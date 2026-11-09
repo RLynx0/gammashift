@@ -1,4 +1,4 @@
-use std::{path::PathBuf, time::Duration};
+use std::{fmt::Display, path::PathBuf, time::Duration};
 
 use chrono::{DateTime, Local};
 use clap::Parser;
@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::{UnixListener, UnixStream},
+    time::sleep,
 };
+use zbus::proxy;
 
 use crate::cli::{Cli, MsgOpts};
 
@@ -34,7 +36,7 @@ fn main() {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Message {
-    property: String,
+    property: GammaRelayProperty,
     target: TargetValue,
     step_duration: Duration,
     start: DateTime<Local>,
@@ -49,9 +51,9 @@ impl From<&MsgOpts> for Message {
         };
         Message {
             property: match opts.property {
-                cli::GammaRelayProperty::Temperature => String::from("Temperature"),
-                cli::GammaRelayProperty::Brightness => String::from("Brightness"),
-                cli::GammaRelayProperty::Gamma => String::from("Gamma"),
+                cli::GammaRelayProperty::Temperature => GammaRelayProperty::Temperature,
+                cli::GammaRelayProperty::Brightness => GammaRelayProperty::Brightness,
+                cli::GammaRelayProperty::Gamma => GammaRelayProperty::Gamma,
             },
             target: match opts.target_value {
                 cli::TargetValue::Undo => TargetValue::Undo,
@@ -64,7 +66,22 @@ impl From<&MsgOpts> for Message {
         }
     }
 }
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum GammaRelayProperty {
+    Temperature,
+    Brightness,
+    Gamma,
+}
+impl Display for GammaRelayProperty {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GammaRelayProperty::Temperature => write!(f, "Temperature"),
+            GammaRelayProperty::Brightness => write!(f, "Brightness"),
+            GammaRelayProperty::Gamma => write!(f, "Gamma"),
+        }
+    }
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
 enum TargetValue {
     Undo,
     Absolute(f64),
@@ -113,14 +130,73 @@ async fn start_engine() -> tokio::io::Result<()> {
                 return tracing::error!("Error reading stream: {e}");
             }
             let decoded: Message = match serde_json::from_str(&message) {
-                Ok(decoded) => decoded,
                 Err(e) => return tracing::error!("Error decoding message: {e}"),
+                Ok(decoded) => decoded,
             };
 
             tracing::info!("Received message: {decoded:?}");
-            if let Err(e) = writer.write_all(b"Hello from daemon").await {
-                tracing::error!("Error writing to stream: {e}")
+
+            let dbus_connection = match zbus::Connection::session().await {
+                Err(e) => return tracing::error!("Error establishing d-bus connection: {e}"),
+                Ok(connection) => connection,
+            };
+            let gammarelay_proxy = match GammaRelayInterfaceProxy::new(&dbus_connection).await {
+                Err(e) => return tracing::error!("Error setting up d-bus proxy: {e}"),
+                Ok(proxy) => proxy,
+            };
+
+            let current = match match &decoded.property {
+                GammaRelayProperty::Brightness => gammarelay_proxy.brightness().await,
+                GammaRelayProperty::Gamma => gammarelay_proxy.gamma().await.map(|g| g as f64),
+                GammaRelayProperty::Temperature => {
+                    gammarelay_proxy.temperature().await.map(|t| t as f64)
+                }
+            } {
+                Err(e) => return tracing::error!("Failed fetching current value: {e}"),
+                Ok(val) => val,
+            };
+
+            let target = match decoded.target {
+                TargetValue::Undo => todo!("Implement Undo"),
+                TargetValue::Relative(r) => current + r,
+                TargetValue::Absolute(v) => v,
+            };
+            let duration = Duration::from_secs_f64((decoded.end - decoded.start).as_seconds_f64());
+            let response = format!(
+                "{} : {current} -> {target} ({duration:?})",
+                decoded.property,
+            );
+            if let Err(e) = writer.write_all(response.as_bytes()).await {
+                return tracing::error!("Error writing to stream: {e}");
+            }
+            drop(writer);
+
+            while Local::now() < decoded.end {
+                tracing::info!("Step!");
+                sleep(decoded.step_duration).await;
             }
         });
     }
+}
+
+#[proxy(
+    interface = "rs.wl.gammarelay",
+    default_service = "rs.wl-gammarelay",
+    default_path = "/"
+)]
+trait GammaRelayInterface {
+    #[zbus(property)]
+    fn temperature(&self) -> zbus::Result<u16>;
+    #[zbus(property)]
+    fn set_temperature(&self, value: u16) -> zbus::Result<()>;
+
+    #[zbus(property)]
+    fn gamma(&self) -> zbus::Result<f64>;
+    #[zbus(property)]
+    fn set_gamma(&self, value: f64) -> zbus::Result<()>;
+
+    #[zbus(property)]
+    fn brightness(&self) -> zbus::Result<f64>;
+    #[zbus(property)]
+    fn set_brightness(&self, value: f64) -> zbus::Result<()>;
 }
