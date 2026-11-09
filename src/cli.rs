@@ -60,7 +60,7 @@ pub enum GammaRelayProperty {
     Gamma,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum TargetValue {
     Undo,
     Absolute(f64),

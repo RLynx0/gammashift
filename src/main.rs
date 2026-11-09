@@ -1,9 +1,12 @@
-use std::{io::Write, os::unix::net::UnixStream, path::PathBuf};
+use std::path::PathBuf;
 
 use chrono::{DateTime, Local};
 use clap::Parser;
 use serde::{Deserialize, Serialize};
-use tokio::net::UnixListener;
+use tokio::{
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    net::{UnixListener, UnixStream},
+};
 
 use crate::cli::{Cli, MsgOpts};
 
@@ -32,6 +35,7 @@ fn main() {
 #[derive(Serialize, Deserialize)]
 struct Message {
     property: &'static str,
+    target: TargetValue,
     start: DateTime<Local>,
     end: DateTime<Local>,
 }
@@ -48,17 +52,37 @@ impl From<&MsgOpts> for Message {
                 cli::GammaRelayProperty::Brightness => "Brightness",
                 cli::GammaRelayProperty::Gamma => "Gamma",
             },
+            target: match opts.target_value {
+                cli::TargetValue::Undo => TargetValue::Undo,
+                cli::TargetValue::Absolute(val) => TargetValue::Absolute(val),
+                cli::TargetValue::Relative(val) => TargetValue::Relative(val),
+            },
             start,
             end,
         }
     }
 }
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+enum TargetValue {
+    Undo,
+    Absolute(f64),
+    Relative(f64),
+}
 
 #[tokio::main]
 async fn send_message(opts: &MsgOpts) -> tokio::io::Result<()> {
-    let mut stream = UnixStream::connect(SOCK_FILE)?;
+    let stream = UnixStream::connect(SOCK_FILE).await?;
+    let (reader, mut writer) = stream.into_split();
     let data = serde_json::to_vec(&Message::from(opts))?;
-    stream.write_all(&data)?;
+    writer.write_all(&data).await?;
+    drop(writer);
+
+    let mut reader = BufReader::new(reader);
+    let mut response = String::new();
+    reader.read_line(&mut response).await?;
+    drop(reader);
+
+    println!("{response}");
     Ok(())
 }
 
@@ -70,9 +94,27 @@ async fn start_engine() -> tokio::io::Result<()> {
     }
     let listener = UnixListener::bind(SOCK_FILE)?;
     loop {
-        match listener.accept().await {
-            Err(e) => tracing::error!("Error accepting from unix listener: {e}"),
-            Ok((stream, addr)) => tracing::info!("stream: {stream:?}, addr: {addr:?}"),
-        }
+        let stream = match listener.accept().await {
+            Ok((stream, _)) => stream,
+            Err(e) => {
+                tracing::error!("Error accepting from unix listener: {e}");
+                continue;
+            }
+        };
+
+        tokio::spawn(async move {
+            let (reader, mut writer) = stream.into_split();
+            let mut reader = BufReader::new(reader);
+
+            let mut message = String::new();
+            if let Err(e) = reader.read_line(&mut message).await {
+                return tracing::error!("Error reading stream: {e}");
+            }
+
+            tracing::info!("Received message: {message}");
+            if let Err(e) = writer.write_all(b"Hello from daemon").await {
+                tracing::error!("Error writing to stream: {e}")
+            }
+        });
     }
 }
