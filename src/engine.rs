@@ -11,7 +11,7 @@ use tokio::{
         UnixListener, UnixStream,
         unix::{OwnedWriteHalf, SocketAddr},
     },
-    signal::ctrl_c,
+    signal::unix::{SignalKind, signal},
     sync::Notify,
     time::sleep,
 };
@@ -29,13 +29,23 @@ pub async fn start_engine(sock: impl Into<PathBuf>) -> tokio::io::Result<()> {
     let listener = UnixListener::bind(&path)?;
     let shutdown = Arc::new(Notify::new());
 
+    let mut sigint = signal(SignalKind::interrupt())?;
+    let mut sigterm = signal(SignalKind::terminate())?;
+
     tracing::info!("[GAMMASHIFT] Ready for messages");
 
     loop {
         tokio::select! {
             a = listener.accept() => handle_accept(a, &shutdown, path.clone()).await,
             _ = shutdown.notified() => break,
-            _ = ctrl_c() => {
+
+            _ = sigint.recv() => {
+                tracing::info!("[GAMMASHIFT] received SIGINT");
+                handle_stop(&shutdown, None, path.clone()).await;
+                break;
+            }
+            _ = sigterm.recv() => {
+                tracing::info!("[GAMMASHIFT] received SIGTERM");
                 handle_stop(&shutdown, None, path.clone()).await;
                 break;
             }
