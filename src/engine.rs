@@ -11,6 +11,7 @@ use tokio::{
         UnixListener, UnixStream,
         unix::{OwnedWriteHalf, SocketAddr},
     },
+    signal::ctrl_c,
     sync::Notify,
     time::sleep,
 };
@@ -32,6 +33,7 @@ pub async fn start_engine(sock: impl Into<PathBuf>) -> tokio::io::Result<()> {
 
     loop {
         tokio::select! {
+            _ = ctrl_c() => break,
             _ = shutdown.notified() => break,
             a = listener.accept() => handle_accept(a, &shutdown, path.clone()).await,
         }
