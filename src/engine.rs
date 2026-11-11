@@ -33,9 +33,12 @@ pub async fn start_engine(sock: impl Into<PathBuf>) -> tokio::io::Result<()> {
 
     loop {
         tokio::select! {
-            _ = ctrl_c() => break,
-            _ = shutdown.notified() => break,
             a = listener.accept() => handle_accept(a, &shutdown, path.clone()).await,
+            _ = shutdown.notified() => break,
+            _ = ctrl_c() => {
+                handle_stop(&shutdown, None, path.clone()).await;
+                break;
+            }
         }
     }
 
@@ -67,22 +70,23 @@ async fn handle_accept(
         match serde_json::from_str::<Message>(&message) {
             Err(e) => tracing::error!("Error decoding message: {e}"),
             Ok(Message::Shift(shift_message)) => handle_shift(&shift_message, writer).await,
-            Ok(Message::Stop) => handle_stop(shutdown, writer, sock_path).await,
+            Ok(Message::Stop) => handle_stop(&shutdown, Some(writer), sock_path).await,
         }
     });
 }
 
 async fn handle_stop(
-    shutdown: Arc<Notify>,
-    mut writer: OwnedWriteHalf,
+    shutdown: &Arc<Notify>,
+    response_writer: Option<OwnedWriteHalf>,
     sock_path: impl AsRef<Path>,
 ) {
     let response = "[GAMMASHIFT] Shutting down";
-    if let Err(e) = writer.write_all(response.as_bytes()).await {
+    if let Some(mut writer) = response_writer
+        && let Err(e) = writer.write_all(response.as_bytes()).await
+    {
         tracing::error!("Error writing to stream: {e}");
-    }
+    };
     tracing::info!("{response}");
-    drop(writer);
     if let Err(e) = tokio::fs::remove_file(sock_path).await {
         tracing::error!("Error removing socket: {e}");
     }
@@ -140,7 +144,7 @@ async fn handle_shift(
         if now > end_time {
             match set_property(&gammarelay_proxy, property, target).await {
                 Err(e) => return tracing::error!("Failed to set property: {e}"),
-                Ok(_) => return tracing::info!("[DONE] {property}:{target}"),
+                Ok(_) => return tracing::info!("[DONE] {property}: {target}"),
             }
         }
         let elapsed = now - start_time;
