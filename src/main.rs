@@ -20,12 +20,12 @@ fn main() {
             }
         }
         GammaShiftCommand::Stop => {
-            if let Err(e) = send_message(&Message::Stop, SOCK_FILE) {
+            if let Err(e) = send_message(SOCK_FILE, &Message::Stop) {
                 tracing::error!("Error sending message to gammashift engine: {e}")
             }
         }
         GammaShiftCommand::Shift(opts) => {
-            if let Err(e) = send_message(&Message::Shift(ShiftMessage::from(&opts)), SOCK_FILE) {
+            if let Err(e) = send_message(SOCK_FILE, &Message::Shift(ShiftMessage::from(&opts))) {
                 tracing::error!("Error sending message to gammashift engine: {e}")
             }
         }

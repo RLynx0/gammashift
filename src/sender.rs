@@ -8,7 +8,7 @@ use tokio::{
 use crate::message::Message;
 
 #[tokio::main]
-pub async fn send_message(message: &Message, socket: impl AsRef<Path>) -> tokio::io::Result<()> {
+pub async fn send_message(socket: impl AsRef<Path>, message: &Message) -> tokio::io::Result<()> {
     let stream = UnixStream::connect(socket).await?;
     let (reader, mut writer) = stream.into_split();
     let data = serde_json::to_vec(&message)?;
