@@ -20,13 +20,17 @@ pub enum GammaShiftCommand {
         daemon: bool,
     },
 
-    Msg(MsgOpts),
+    /// Send a stop message to a running gammashift engine
+    #[command(author, version, about, long_about = None)]
+    Stop,
+
+    /// Send a shift message to a running gammashift engine
+    #[command(author, version, about, long_about = None)]
+    Shift(ShiftOptions),
 }
 
-/// Send an instruction to a running gammashift engine
 #[derive(Debug, Clone, Parser)]
-#[command(author, version, about, long_about = None)]
-pub struct MsgOpts {
+pub struct ShiftOptions {
     /// Property to shift.
     pub property: GammaRelayProperty,
 

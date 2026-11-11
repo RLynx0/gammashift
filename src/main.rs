@@ -1,16 +1,20 @@
-use std::{fmt::Display, path::PathBuf, time::Duration};
+use std::{fmt::Display, path::PathBuf, sync::Arc, time::Duration};
 
 use chrono::{DateTime, Local};
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    net::{UnixListener, UnixStream},
+    net::{
+        UnixListener, UnixStream,
+        unix::{OwnedWriteHalf, SocketAddr},
+    },
+    sync::Notify,
     time::sleep,
 };
 use zbus::proxy;
 
-use crate::cli::{Cli, MsgOpts};
+use crate::cli::{Cli, ShiftOptions};
 
 mod cli;
 
@@ -30,8 +34,13 @@ fn main() {
                 tracing::error!("Error starting gammashift engine: {e}")
             }
         }
-        cli::GammaShiftCommand::Msg(msg) => {
-            if let Err(e) = send_message(&msg) {
+        cli::GammaShiftCommand::Stop => {
+            if let Err(e) = send_message(&Message::Stop) {
+                tracing::error!("Error sending message to gammashift engine: {e}")
+            }
+        }
+        cli::GammaShiftCommand::Shift(opts) => {
+            if let Err(e) = send_message(&Message::Shift(ShiftMessage::from(&opts))) {
                 tracing::error!("Error sending message to gammashift engine: {e}")
             }
         }
@@ -39,21 +48,27 @@ fn main() {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct Message {
+enum Message {
+    Shift(ShiftMessage),
+    Stop,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ShiftMessage {
     property: GammaRelayProperty,
     target: TargetValue,
     step_duration: Duration,
     start: DateTime<Local>,
     end: DateTime<Local>,
 }
-impl From<&MsgOpts> for Message {
-    fn from(opts: &MsgOpts) -> Self {
+impl From<&ShiftOptions> for ShiftMessage {
+    fn from(opts: &ShiftOptions) -> Self {
         let start = Local::now();
         let end = match opts.time {
             cli::ShiftTime::Instant => start,
             cli::ShiftTime::Dur(d) => start + d,
         };
-        Message {
+        ShiftMessage {
             property: match opts.property {
                 cli::GammaRelayProperty::Temperature => GammaRelayProperty::Temperature,
                 cli::GammaRelayProperty::Brightness => GammaRelayProperty::Brightness,
@@ -65,7 +80,7 @@ impl From<&MsgOpts> for Message {
                 cli::TargetValue::Absolute(val) => TargetValue::Absolute(val),
                 cli::TargetValue::Relative(val) => TargetValue::Relative(val),
             },
-            step_duration: Duration::from_millis(2),
+            step_duration: Duration::from_millis(10),
             start,
             end,
         }
@@ -95,10 +110,10 @@ enum TargetValue {
 }
 
 #[tokio::main]
-async fn send_message(opts: &MsgOpts) -> tokio::io::Result<()> {
+async fn send_message(message: &Message) -> tokio::io::Result<()> {
     let stream = UnixStream::connect(SOCK_FILE).await?;
     let (reader, mut writer) = stream.into_split();
-    let data = serde_json::to_vec(&Message::from(opts))?;
+    let data = serde_json::to_vec(&message)?;
     writer.write_all(&data).await?;
     drop(writer);
 
@@ -118,84 +133,124 @@ async fn start_engine() -> tokio::io::Result<()> {
         tokio::fs::create_dir_all(&dir).await?;
     }
     let listener = UnixListener::bind(SOCK_FILE)?;
+    let shutdown = Arc::new(Notify::new());
+
+    tracing::info!("[GAMMASHIFT] Ready for messages");
+
     loop {
-        let stream = match listener.accept().await {
-            Ok((stream, _)) => stream,
-            Err(e) => {
-                tracing::error!("Error accepting from unix listener: {e}");
-                continue;
+        tokio::select! {
+            _ = shutdown.notified() => break,
+            a = listener.accept() => handle_accept(a, &shutdown).await,
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_accept(
+    accepted: tokio::io::Result<(UnixStream, SocketAddr)>,
+    shutdown: &Arc<Notify>,
+) {
+    let stream = match accepted {
+        Ok((stream, _)) => stream,
+        Err(e) => {
+            tracing::error!("Error accepting from unix listener: {e}");
+            return;
+        }
+    };
+
+    let shutdown = Arc::clone(shutdown);
+    tokio::spawn(async move {
+        let (reader, writer) = stream.into_split();
+        let mut reader = BufReader::new(reader);
+
+        let mut message = String::new();
+        if let Err(e) = reader.read_line(&mut message).await {
+            return tracing::error!("Error reading stream: {e}");
+        }
+        match serde_json::from_str::<Message>(&message) {
+            Err(e) => tracing::error!("Error decoding message: {e}"),
+            Ok(Message::Shift(shift_message)) => handle_shift(&shift_message, writer).await,
+            Ok(Message::Stop) => handle_stop(shutdown, writer).await,
+        }
+    });
+}
+
+async fn handle_stop(shutdown: Arc<Notify>, mut writer: OwnedWriteHalf) {
+    let response = "[GAMMASHIFT] Shutting down";
+    if let Err(e) = writer.write_all(response.as_bytes()).await {
+        tracing::error!("Error writing to stream: {e}");
+    }
+    tracing::info!("{response}");
+    drop(writer);
+    if let Err(e) = tokio::fs::remove_file(SOCK_FILE).await {
+        tracing::error!("Error removing socket: {e}");
+    }
+    shutdown.notify_waiters();
+}
+
+async fn handle_shift(
+    ShiftMessage {
+        property,
+        target,
+        step_duration,
+        start: start_time,
+        end: end_time,
+    }: &ShiftMessage,
+    mut writer: OwnedWriteHalf,
+) {
+    let step_duration = *step_duration;
+    let start_time = *start_time;
+    let end_time = *end_time;
+
+    let dbus_connection = match zbus::Connection::session().await {
+        Err(e) => return tracing::error!("Error establishing d-bus connection: {e}"),
+        Ok(connection) => connection,
+    };
+    let gammarelay_proxy = match GammaRelayInterfaceProxy::new(&dbus_connection).await {
+        Err(e) => return tracing::error!("Error setting up d-bus proxy: {e}"),
+        Ok(proxy) => proxy,
+    };
+
+    let current = match get_property(&gammarelay_proxy, property).await {
+        Err(e) => return tracing::error!("Error fetching current value: {e}"),
+        Ok(val) => val,
+    };
+
+    let target = match target {
+        TargetValue::Absolute(v) => *v,
+        TargetValue::Relative(r) => current + r,
+        TargetValue::Undo => todo!("Implement Undo"),
+        TargetValue::Default => match &property {
+            GammaRelayProperty::Temperature => DEFAULT_TEMPERATURE,
+            GammaRelayProperty::Brightness => DEFAULT_BRIGHTNESS,
+            GammaRelayProperty::Gamma => DEFAULT_GAMMA,
+        },
+    };
+    let duration = Duration::from_secs_f64((end_time - start_time).as_seconds_f64());
+    let response = format!("[STARTED] {property}: {current} -> {target} ({duration:?})");
+    if let Err(e) = writer.write_all(response.as_bytes()).await {
+        tracing::error!("Error writing to stream: {e}");
+    }
+    drop(writer);
+    tracing::info!("{response}");
+
+    loop {
+        let now = Local::now();
+        if now > end_time {
+            match set_property(&gammarelay_proxy, property, target).await {
+                Err(e) => return tracing::error!("Failed to set property: {e}"),
+                Ok(_) => return tracing::info!("[DONE] {property}:{target}"),
             }
-        };
-
-        tokio::spawn(async move {
-            let (reader, mut writer) = stream.into_split();
-            let mut reader = BufReader::new(reader);
-
-            let mut message = String::new();
-            if let Err(e) = reader.read_line(&mut message).await {
-                return tracing::error!("Error reading stream: {e}");
-            }
-            let Message {
-                property,
-                target,
-                step_duration,
-                start: start_time,
-                end: end_time,
-            } = match serde_json::from_str(&message) {
-                Err(e) => return tracing::error!("Error decoding message: {e}"),
-                Ok(decoded) => decoded,
-            };
-
-            let dbus_connection = match zbus::Connection::session().await {
-                Err(e) => return tracing::error!("Error establishing d-bus connection: {e}"),
-                Ok(connection) => connection,
-            };
-            let gammarelay_proxy = match GammaRelayInterfaceProxy::new(&dbus_connection).await {
-                Err(e) => return tracing::error!("Error setting up d-bus proxy: {e}"),
-                Ok(proxy) => proxy,
-            };
-
-            let current = match get_property(&gammarelay_proxy, &property).await {
-                Err(e) => return tracing::error!("Failed fetching current value: {e}"),
-                Ok(val) => val,
-            };
-
-            let target = match target {
-                TargetValue::Absolute(v) => v,
-                TargetValue::Relative(r) => current + r,
-                TargetValue::Undo => todo!("Implement Undo"),
-                TargetValue::Default => match &property {
-                    GammaRelayProperty::Temperature => DEFAULT_TEMPERATURE,
-                    GammaRelayProperty::Brightness => DEFAULT_BRIGHTNESS,
-                    GammaRelayProperty::Gamma => DEFAULT_GAMMA,
-                },
-            };
-            let duration = Duration::from_secs_f64((end_time - start_time).as_seconds_f64());
-            let response = format!("[STARTED] {property}: {current} -> {target} ({duration:?})");
-            if let Err(e) = writer.write_all(response.as_bytes()).await {
-                return tracing::error!("Error writing to stream: {e}");
-            }
-            drop(writer);
-            tracing::info!("{response}");
-
-            loop {
-                let now = Local::now();
-                if now > end_time {
-                    match set_property(&gammarelay_proxy, &property, target).await {
-                        Err(e) => return tracing::error!("Failed to set property: {e}"),
-                        Ok(_) => return tracing::info!("[DONE] {property}:{target}"),
-                    }
-                }
-                let elapsed = now - start_time;
-                let factor = elapsed.as_seconds_f64() / duration.as_secs_f64();
-                let step_target = current + factor * (target - current);
-                match set_property(&gammarelay_proxy, &property, step_target).await {
-                    Err(e) => return tracing::error!("Failed to set property: {e}"),
-                    Ok(_) => tracing::debug!("[STEP] {property}:{step_target}"),
-                }
-                sleep(step_duration).await;
-            }
-        });
+        }
+        let elapsed = now - start_time;
+        let factor = elapsed.as_seconds_f64() / duration.as_secs_f64();
+        let step_target = current + factor * (target - current);
+        match set_property(&gammarelay_proxy, property, step_target).await {
+            Err(e) => return tracing::error!("Failed to set property: {e}"),
+            Ok(_) => tracing::debug!("[STEP] {property}:{step_target}"),
+        }
+        sleep(step_duration).await;
     }
 }
 
