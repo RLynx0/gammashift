@@ -46,7 +46,7 @@ pub(crate) async fn handle_shift(
         },
     };
     let duration = Duration::from_secs_f64((end_time - start_time).as_seconds_f64());
-    let response = format!("[STARTED] {property}: {current} -> {target} ({duration:?})");
+    let response = format!("Shifting {property}: {current} -> {target} ({duration:?})");
     if let Err(e) = writer.write_all(response.as_bytes()).await {
         tracing::error!("Error writing to stream: {e}");
     }
@@ -58,7 +58,7 @@ pub(crate) async fn handle_shift(
         if now > end_time {
             match set_property(&gammarelay_proxy, property, target).await {
                 Err(e) => return tracing::error!("Failed to set property: {e}"),
-                Ok(_) => return tracing::info!("[DONE] {property}: {target}"),
+                Ok(_) => return tracing::info!("Shifted {property}: {target}"),
             }
         }
         let elapsed = now - start_time;
@@ -66,7 +66,7 @@ pub(crate) async fn handle_shift(
         let step_target = current + factor * (target - current);
         match set_property(&gammarelay_proxy, property, step_target).await {
             Err(e) => return tracing::error!("Failed to set property: {e}"),
-            Ok(_) => tracing::debug!("[STEP] {property}:{step_target}"),
+            Ok(_) => tracing::debug!("Shiftstep {property}:{step_target}"),
         }
         sleep(step_duration).await;
     }

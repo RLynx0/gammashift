@@ -29,7 +29,7 @@ pub async fn start_engine(sock: impl Into<PathBuf>) -> tokio::io::Result<()> {
     let mut sigint = signal(SignalKind::interrupt())?;
     let mut sigterm = signal(SignalKind::terminate())?;
 
-    tracing::info!("[GAMMASHIFT] Ready for messages");
+    tracing::info!("Ready for messages");
 
     loop {
         tokio::select! {
@@ -37,12 +37,12 @@ pub async fn start_engine(sock: impl Into<PathBuf>) -> tokio::io::Result<()> {
             _ = shutdown.notified() => break,
 
             _ = sigint.recv() => {
-                tracing::info!("[GAMMASHIFT] received SIGINT");
+                tracing::info!("Received SIGINT");
                 handle_stop(&shutdown, None, path.clone()).await;
                 break;
             }
             _ = sigterm.recv() => {
-                tracing::info!("[GAMMASHIFT] received SIGTERM");
+                tracing::info!("Received SIGTERM");
                 handle_stop(&shutdown, None, path.clone()).await;
                 break;
             }
@@ -77,11 +77,11 @@ async fn handle_accept(
         match serde_json::from_str::<Message>(&message) {
             Err(e) => tracing::error!("Error decoding message: {e}"),
             Ok(Message::Shift(shift_message)) => {
-                tracing::info!("[RECEIVED] Shift message");
+                tracing::info!("Received Shift message");
                 shift::handle_shift(&shift_message, writer).await
             }
             Ok(Message::Stop) => {
-                tracing::info!("[RECEIVED] Stop message");
+                tracing::info!("Received Stop message");
                 handle_stop(&shutdown, Some(writer), sock_path).await
             }
         }
@@ -93,7 +93,7 @@ async fn handle_stop(
     response_writer: Option<OwnedWriteHalf>,
     sock_path: impl AsRef<Path>,
 ) {
-    let response = "[GAMMASHIFT] Shutting down";
+    let response = "Shutting down";
     if let Some(mut writer) = response_writer
         && let Err(e) = writer.write_all(response.as_bytes()).await
     {
