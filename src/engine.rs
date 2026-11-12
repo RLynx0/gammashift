@@ -76,8 +76,14 @@ async fn handle_accept(
         }
         match serde_json::from_str::<Message>(&message) {
             Err(e) => tracing::error!("Error decoding message: {e}"),
-            Ok(Message::Shift(shift_message)) => shift::handle_shift(&shift_message, writer).await,
-            Ok(Message::Stop) => handle_stop(&shutdown, Some(writer), sock_path).await,
+            Ok(Message::Shift(shift_message)) => {
+                tracing::info!("[RECEIVED] Shift message");
+                shift::handle_shift(&shift_message, writer).await
+            }
+            Ok(Message::Stop) => {
+                tracing::info!("[RECEIVED] Stop message");
+                handle_stop(&shutdown, Some(writer), sock_path).await
+            }
         }
     });
 }
