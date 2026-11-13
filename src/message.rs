@@ -37,6 +37,7 @@ impl From<&cli::ShiftOptions> for ShiftMessage {
                 cli::TargetValue::Default => TargetValue::Default,
                 cli::TargetValue::Absolute(val) => TargetValue::Absolute(val),
                 cli::TargetValue::Relative(val) => TargetValue::Relative(val),
+                cli::TargetValue::Linear(val) => TargetValue::Linear(val),
             },
             step_duration: Duration::from_millis(10),
             start,
@@ -66,4 +67,5 @@ pub enum TargetValue {
     Default,
     Absolute(f64),
     Relative(f64),
+    Linear(f64),
 }

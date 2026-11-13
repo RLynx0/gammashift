@@ -36,8 +36,9 @@ pub(crate) async fn handle_shift(
     };
 
     let target = match target {
-        TargetValue::Absolute(v) => *v,
-        TargetValue::Relative(r) => current + r,
+        TargetValue::Absolute(value) => *value,
+        TargetValue::Relative(delta) => current + delta,
+        TargetValue::Linear(factor) => current * factor,
         TargetValue::Undo => todo!("Implement Undo"),
         TargetValue::Default => match &property {
             GammaRelayProperty::Temperature => DEFAULT_TEMPERATURE,

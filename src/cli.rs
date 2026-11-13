@@ -70,6 +70,7 @@ pub enum TargetValue {
     Default,
     Absolute(f64),
     Relative(f64),
+    Linear(f64),
 }
 impl FromStr for TargetValue {
     type Err = ParseFloatError;
@@ -80,6 +81,9 @@ impl FromStr for TargetValue {
             "default" => Ok(TargetValue::Default),
             relative_str if matches!(relative_str.chars().next(), Some('+') | Some('-')) => {
                 relative_str.parse::<f64>().map(TargetValue::Relative)
+            }
+            relative_str if matches!(relative_str.chars().next(), Some('*') | Some('x')) => {
+                relative_str[1..].parse::<f64>().map(TargetValue::Linear)
             }
             absolute_str => absolute_str.parse::<f64>().map(TargetValue::Absolute),
         }
