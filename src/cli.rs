@@ -35,14 +35,22 @@ pub struct ShiftOptions {
     pub property: GammaRelayProperty,
 
     /// Target value to shift the property to.
+    ///
+    /// Must be a float, optionally preceded by a prefixed.
+    ///
+    /// Supported prefixes:
+    /// - `-`  The target value becomes the current value minus the float.
+    /// - `+`  The target value becomes the current value plus the float.
+    /// - `*`  The target value becomes the current value multiplied by the float.
+    #[clap(verbatim_doc_comment)]
     pub target_value: TargetValue,
 
     /// Duration after which the target value should be reached.
     ///
-    /// Must be a positive float, optionally followed by a prefix.
-    /// Without a prefix, the value is treated as representing seconds.
+    /// Must be a positive float, optionally followed by a postfix.
+    /// Without a postfix, the value is treated as representing seconds.
     ///
-    /// Supported prefixes:
+    /// Supported postfixes:
     /// - ms | milliseconds
     /// - s  | seconds
     /// - m  | minutes
@@ -82,7 +90,7 @@ impl FromStr for TargetValue {
             relative_str if matches!(relative_str.chars().next(), Some('+') | Some('-')) => {
                 relative_str.parse::<f64>().map(TargetValue::Relative)
             }
-            relative_str if matches!(relative_str.chars().next(), Some('*') | Some('x')) => {
+            relative_str if matches!(relative_str.chars().next(), Some('*')) => {
                 relative_str[1..].parse::<f64>().map(TargetValue::Linear)
             }
             absolute_str => absolute_str.parse::<f64>().map(TargetValue::Absolute),
