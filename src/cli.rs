@@ -2,6 +2,9 @@ use std::{num::ParseFloatError, str::FromStr, time::Duration};
 
 use clap::{Parser, Subcommand, ValueEnum};
 
+#[cfg(test)]
+mod tests;
+
 /// Transition engine for ws-gamma-relay-rs
 #[derive(Debug, Clone, Parser)]
 #[command(author, version, about, long_about = None)]
@@ -36,14 +39,23 @@ pub struct ShiftOptions {
 
     /// Target value to shift the property to.
     ///
-    /// Must be a float, optionally preceded by a prefixed.
+    /// A float, optionally preceded by a prefix, or `undo` / `default`.
+    ///
+    /// Relative and linear targets use the target of an in-flight shift for this
+    /// property as reference, or the actual current value if none is running.
+    /// Undo restores the reference stored by the last shift with this property
+    /// and id. Default restores the property's default value.
     ///
     /// Supported prefixes:
-    /// - `-`  The target value becomes the current value minus the float.
-    /// - `+`  The target value becomes the current value plus the float.
-    /// - `*`  The target value becomes the current value multiplied by the float.
-    #[clap(verbatim_doc_comment)]
+    /// - `-`  The target value becomes the reference minus the float.
+    /// - `+`  The target value becomes the reference plus the float.
+    /// - `*`  The target value becomes the reference multiplied by the float.
+    #[arg(allow_negative_numbers = true, verbatim_doc_comment)]
     pub target_value: TargetValue,
+
+    /// History id for undo (scoped to the property). All ids interrupt each other.
+    #[arg(short, long, default_value = "")]
+    pub id: String,
 
     /// Duration after which the target value should be reached.
     ///
@@ -114,6 +126,7 @@ impl FromStr for ShiftTime {
         if number_part == "0" {
             return Ok(ShiftTime::Instant);
         }
+
         let number_value = number_part.parse::<f64>().map_err(|e| e.to_string())?;
         if number_value < 0.0 {
             return Err("Shift duration cannot be less than 0".to_string());

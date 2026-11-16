@@ -14,6 +14,8 @@ pub enum Message {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShiftMessage {
     pub property: GammaRelayProperty,
+    #[serde(default)]
+    pub id: String,
     pub target: TargetValue,
     pub step_duration: Duration,
     pub start: DateTime<Local>,
@@ -27,6 +29,7 @@ impl From<&cli::ShiftOptions> for ShiftMessage {
             cli::ShiftTime::Dur(d) => start + d,
         };
         ShiftMessage {
+            id: opts.id.clone(),
             property: match opts.property {
                 cli::GammaRelayProperty::Temperature => GammaRelayProperty::Temperature,
                 cli::GammaRelayProperty::Brightness => GammaRelayProperty::Brightness,
@@ -46,7 +49,7 @@ impl From<&cli::ShiftOptions> for ShiftMessage {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum GammaRelayProperty {
     Temperature,
     Brightness,
