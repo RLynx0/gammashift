@@ -60,6 +60,9 @@ async fn handle_accept(
             Ok(Message::Shift(shift_message)) => {
                 handle_shift_message(&tx, &mut writer, shift_message).await
             }
+            Ok(Message::Get(get_message)) => {
+                handle_get_message(&tx, &mut writer, get_message).await
+            }
         }
     });
 }
@@ -72,6 +75,18 @@ async fn handle_shift_message(
     tracing::info!("Received Shift message");
     let (reply, response) = oneshot::channel();
     let instruction = Instruction::Shift { message, reply };
+    let response = coordinator_reponse_or_err(tx, instruction, response).await;
+    write_response(writer, response).await;
+}
+
+async fn handle_get_message(
+    tx: &Sender<Instruction>,
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+    message: crate::message::GetMessage,
+) {
+    tracing::info!("Received Get message");
+    let (reply, response) = oneshot::channel();
+    let instruction = Instruction::Get { message, reply };
     let response = coordinator_reponse_or_err(tx, instruction, response).await;
     write_response(writer, response).await;
 }

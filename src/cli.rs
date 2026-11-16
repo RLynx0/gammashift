@@ -26,6 +26,10 @@ pub enum GammaShiftCommand {
     /// Send a shift message to a running gammashift engine
     #[command(author, version, about, long_about = None)]
     Shift(ShiftOptions),
+
+    /// Send a get message to a running gammashift engine
+    #[command(author, version, about, long_about = None)]
+    Get(GetOptions),
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -72,6 +76,13 @@ pub struct ShiftOptions {
     /// - 200ms  200 milliseconds
     #[arg(short, long, default_value = "2.0 seconds", verbatim_doc_comment)]
     pub time: ShiftTime,
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct GetOptions {
+    /// Property to get the target value of.
+    #[arg(ignore_case = true)]
+    pub property: GammaRelayProperty,
 }
 
 #[derive(Debug, Clone, ValueEnum)]

@@ -8,6 +8,7 @@ use crate::cli;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Message {
     Shift(ShiftMessage),
+    Get(GetMessage),
     Stop,
 }
 
@@ -52,6 +53,22 @@ impl From<&cli::ShiftOptions> for ShiftMessage {
             step_duration: Duration::from_millis(10),
             start,
             end,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetMessage {
+    pub property: GammaRelayProperty,
+}
+impl From<&cli::GetOptions> for GetMessage {
+    fn from(opts: &cli::GetOptions) -> Self {
+        GetMessage {
+            property: match opts.property {
+                cli::GammaRelayProperty::Temperature => GammaRelayProperty::Temperature,
+                cli::GammaRelayProperty::Brightness => GammaRelayProperty::Brightness,
+                cli::GammaRelayProperty::Gamma => GammaRelayProperty::Gamma,
+            },
         }
     }
 }

@@ -11,7 +11,7 @@ use super::{
 };
 use crate::{
     gamma_relay_interface::{GammaRelayInterfaceProxy, get_property},
-    message::{GammaRelayProperty, ShiftMessage, TargetValue},
+    message::{GammaRelayProperty, GetMessage, ShiftMessage, TargetValue},
 };
 
 #[cfg(test)]
@@ -20,6 +20,10 @@ mod tests;
 pub(super) enum Instruction {
     Shift {
         message: ShiftMessage,
+        reply: oneshot::Sender<Result<String, String>>,
+    },
+    Get {
+        message: GetMessage,
         reply: oneshot::Sender<Result<String, String>>,
     },
     Stop {
@@ -94,6 +98,21 @@ impl Coordinator {
         Ok(response)
     }
 
+    async fn get(&self, message: GetMessage) -> Result<String, String> {
+        let property = message.property;
+        let mut in_flight_target = None;
+        if let Some(in_flight) = self.in_flight.get(&property)
+            && !in_flight.handle.is_finished() {
+                in_flight_target = Some(in_flight.target);
+            }
+        let actual = match get_property(&self.proxy, &property).await {
+            Ok(value) => value,
+            Err(e) => return Err(format!("Error fetching current {property}: {e}")),
+        };
+        let reference = in_flight_target.unwrap_or(actual);
+        Ok(reference.to_string())
+    }
+
     async fn stop(&mut self) {
         for (_, in_flight) in self.in_flight.drain() {
             in_flight.handle.abort();
@@ -125,6 +144,15 @@ pub(super) async fn start_coordinator(
                                 tracing::error!("{response}");
                                 _ = reply.send(Err(response));
                             },
+                        }
+                    }
+                    Some(Instruction::Get { message, reply }) => {
+                        match coordinator.get(message).await {
+                            Ok(response) => _ = reply.send(Ok(response)),
+                            Err(response) => {
+                                tracing::error!("{response}");
+                                _ = reply.send(Err(response));
+                            }
                         }
                     }
                     Some(Instruction::Stop { reply }) => {

@@ -5,7 +5,7 @@ use clap::Parser;
 use gammashift::{
     cli::{Cli, GammaShiftCommand},
     engine::start_engine,
-    message::{Message, ShiftMessage},
+    message::{GetMessage, Message, ShiftMessage},
     sender::send_message,
     socket_path,
 };
@@ -26,6 +26,9 @@ fn main() -> ExitCode {
         GammaShiftCommand::Stop => send_message(socket, &Message::Stop).map(Some),
         GammaShiftCommand::Shift(opts) => {
             send_message(socket, &Message::Shift(ShiftMessage::from(&opts))).map(Some)
+        }
+        GammaShiftCommand::Get(opts) => {
+            send_message(socket, &Message::Get(GetMessage::from(&opts))).map(Some)
         }
     };
 
