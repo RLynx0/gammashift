@@ -25,12 +25,16 @@
         naersk' = pkgs.callPackage naersk { };
       in
       {
-        defaultPackage = naersk'.buildPackage { src = ./.; };
+        packages.default = naersk'.buildPackage {
+          src = ./.;
+          meta.mainProgram = "gammashift";
+        };
 
-        devShell = pkgs.mkShell {
+        devShells.default = pkgs.mkShell {
           nativeBuildInputs = with pkgs; [
             alejandra
             rust-analyzer
+            dbus
             (pkgs.fenix.stable.withComponents [
               "cargo"
               "clippy"
