@@ -29,6 +29,24 @@ fn shift_accepts_long_id_option() {
 }
 
 #[test]
+fn start_does_not_accept_a_daemon_flag() {
+    let result = Cli::try_parse_from(["gammashift", "start", "--daemon"]);
+
+    assert_eq!(
+        result.unwrap_err().kind(),
+        clap::error::ErrorKind::UnknownArgument
+    );
+}
+
+#[test]
+fn shift_property_is_case_insensitive() {
+    for property in ["temperature", "TEMPERATURE", "TeMpErAtUrE"] {
+        let result = Cli::try_parse_from(["gammashift", "shift", property, "4200"]);
+        assert!(result.is_ok(), "failed to parse {property}");
+    }
+}
+
+#[test]
 fn shift_accepts_short_id_option() {
     let message = parse_shift(&["0.5", "-i", "example"]);
 
@@ -54,6 +72,24 @@ fn shift_accepts_linear_target() {
     let message = parse_shift(&["*0.5"]);
 
     assert!(matches!(message.target, MessageTargetValue::Linear(v) if v == 0.5));
+}
+
+#[test]
+fn idle_style_linear_shift_preserves_duration_and_history_id() {
+    let message = parse_shift(&["*0.3", "-t", "1.5", "--id", "idle-dim"]);
+
+    assert!(matches!(message.target, MessageTargetValue::Linear(v) if v == 0.3));
+    assert_eq!(message.id, "idle-dim");
+    assert!(((message.end - message.start).as_seconds_f64() - 1.5).abs() < 0.001);
+}
+
+#[test]
+fn idle_style_undo_preserves_duration_and_history_id() {
+    let message = parse_shift(&["undo", "-t", "0.3", "--id", "idle-dim"]);
+
+    assert!(matches!(message.target, MessageTargetValue::Undo));
+    assert_eq!(message.id, "idle-dim");
+    assert!(((message.end - message.start).as_seconds_f64() - 0.3).abs() < 0.001);
 }
 
 #[test]

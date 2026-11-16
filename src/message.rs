@@ -11,6 +11,13 @@ pub enum Message {
     Stop,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", content = "message", rename_all = "lowercase")]
+pub enum EngineResponse {
+    Ok(String),
+    Error(String),
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShiftMessage {
     pub property: GammaRelayProperty,

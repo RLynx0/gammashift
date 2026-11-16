@@ -17,11 +17,7 @@ pub struct Cli {
 pub enum GammaShiftCommand {
     /// Start the gammashift engine
     #[command(author, version, about, long_about = None)]
-    Start {
-        /// Start in daemon mode
-        #[arg(short, long)]
-        daemon: bool,
-    },
+    Start,
 
     /// Send a stop message to a running gammashift engine
     #[command(author, version, about, long_about = None)]
@@ -35,6 +31,7 @@ pub enum GammaShiftCommand {
 #[derive(Debug, Clone, Parser)]
 pub struct ShiftOptions {
     /// Property to shift.
+    #[arg(ignore_case = true)]
     pub property: GammaRelayProperty,
 
     /// Target value to shift the property to.

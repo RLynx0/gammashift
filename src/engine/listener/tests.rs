@@ -1,9 +1,9 @@
 use std::time::Duration;
 
-use tokio::{io::AsyncReadExt, sync::mpsc, time::timeout};
+use tokio::{sync::mpsc, time::timeout};
 
 use super::*;
-use crate::message::{GammaRelayProperty, ShiftMessage, TargetValue};
+use crate::message::{EngineResponse, GammaRelayProperty, ShiftMessage, TargetValue};
 
 fn shift_message() -> Message {
     let start = chrono::Local::now();
@@ -38,9 +38,13 @@ async fn with_listener(
 }
 
 async fn read_response(client: &mut UnixStream) -> String {
+    let mut reader = tokio::io::BufReader::new(client);
     let mut response = String::new();
-    client.read_to_string(&mut response).await.unwrap();
-    response
+    reader.read_line(&mut response).await.unwrap();
+    match serde_json::from_str::<EngineResponse>(&response).unwrap() {
+        EngineResponse::Ok(message) => message,
+        EngineResponse::Error(message) => panic!("expected success, got {message}"),
+    }
 }
 
 #[tokio::test]
@@ -56,7 +60,7 @@ async fn shift_forwards_the_message_to_the_coordinator() {
             serde_json::to_value(Message::Shift(message)).unwrap(),
             expected
         );
-        reply.send(String::new()).unwrap();
+        reply.send(Ok(String::new())).unwrap();
         read_response(client).await;
     })
     .await;
@@ -70,7 +74,7 @@ async fn shift_returns_the_coordinator_response() {
         };
 
         reply
-            .send("Shifting Temperature: 4000 -> 4500".into())
+            .send(Ok("Shifting Temperature: 4000 -> 4500".into()))
             .unwrap();
 
         assert_eq!(
@@ -89,11 +93,11 @@ async fn shift_returns_the_coordinator_error() {
         };
 
         reply
-            .send("Nothing to undo for Temperature".into())
+            .send(Err("Nothing to undo for Temperature".into()))
             .unwrap();
 
         assert_eq!(
-            read_response(client).await,
+            read_error_response(client).await,
             "Nothing to undo for Temperature"
         );
     })
@@ -107,7 +111,7 @@ async fn stop_forwards_the_instruction_and_returns_the_coordinator_response() {
             panic!("expected a stop instruction");
         };
 
-        reply.send("Shutting down".into()).unwrap();
+        reply.send(Ok("Shutting down".into())).unwrap();
 
         assert_eq!(read_response(client).await, "Shutting down");
     })
@@ -127,7 +131,10 @@ async fn unavailable_coordinator_returns_an_error() {
     .await
     .unwrap();
 
-    assert_eq!(result, "Error: coordinator unavailable");
+    assert_eq!(
+        result,
+        EngineResponse::Error("Coordinator unavailable".into())
+    );
 }
 
 #[tokio::test]
@@ -139,11 +146,20 @@ async fn dropped_coordinator_reply_returns_an_error() {
 
         drop(reply);
 
-        assert!(
-            read_response(client)
-                .await
-                .starts_with("Error: coordinator stopped")
+        assert_eq!(
+            read_error_response(client).await,
+            "Coordinator stopped before replying"
         );
     })
     .await;
+}
+
+async fn read_error_response(client: &mut UnixStream) -> String {
+    let mut reader = tokio::io::BufReader::new(client);
+    let mut response = String::new();
+    reader.read_line(&mut response).await.unwrap();
+    match serde_json::from_str::<EngineResponse>(&response).unwrap() {
+        EngineResponse::Error(message) => message,
+        EngineResponse::Ok(message) => panic!("expected an error, got {message}"),
+    }
 }

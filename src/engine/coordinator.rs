@@ -20,10 +20,10 @@ mod tests;
 pub(super) enum Instruction {
     Shift {
         message: ShiftMessage,
-        reply: oneshot::Sender<String>,
+        reply: oneshot::Sender<Result<String, String>>,
     },
     Stop {
-        reply: oneshot::Sender<String>,
+        reply: oneshot::Sender<Result<String, String>>,
     },
 }
 
@@ -120,16 +120,15 @@ pub(super) async fn start_coordinator(
                 match inst {
                     Some(Instruction::Shift { message, reply }) => {
                         match coordinator.shift(message).await {
-                            Ok(response) => _ = reply.send(response),
+                            Ok(response) => _ = reply.send(Ok(response)),
                             Err(response) => {
                                 tracing::error!("{response}");
-                                _ = reply.send(response);
+                                _ = reply.send(Err(response));
                             },
                         }
                     }
                     Some(Instruction::Stop { reply }) => {
-                        let response = String::from("Shutting down");
-                        _ = reply.send(response);
+                        _ = reply.send(Ok(String::from("Shutting down")));
                         break;
                     }
                     None => break,

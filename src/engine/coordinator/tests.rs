@@ -320,6 +320,26 @@ async fn undo_uses_history_for_the_matching_property() {
 
 #[tokio::test]
 #[ignore = "requires a session bus: dbus-run-session -- cargo test -- --include-ignored"]
+async fn default_id_manual_adjustments_do_not_overwrite_idle_dim_history() {
+    with_coordinator(async |fixture| {
+        fixture.shift(Brightness, Linear(0.3), "idle-dim").await;
+        let idle_record = fixture.record(Brightness, "idle-dim");
+
+        fixture.shift(Brightness, Absolute(0.8), "").await;
+
+        assert_eq!(fixture.record(Brightness, "idle-dim"), idle_record);
+        fixture.shift(Brightness, Undo, "idle-dim").await;
+
+        assert_eq!(
+            fixture.record(Brightness, "idle-dim").target,
+            idle_record.reference
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires a session bus: dbus-run-session -- cargo test -- --include-ignored"]
 async fn completed_shift_is_not_used_as_an_in_flight_reference() {
     with_coordinator(async |fixture| {
         let mut instant = message(Temperature, Absolute(4500.0), "example");
