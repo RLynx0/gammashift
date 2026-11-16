@@ -83,6 +83,10 @@ pub struct GetOptions {
     /// Property to get the target value of.
     #[arg(ignore_case = true)]
     pub property: GammaRelayProperty,
+
+    /// Round output to a number of digits after the decimal point.
+    #[arg(short, long, default_value = "2")]
+    pub round: u8,
 }
 
 #[derive(Debug, Clone, ValueEnum)]

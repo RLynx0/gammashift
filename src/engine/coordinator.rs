@@ -102,15 +102,16 @@ impl Coordinator {
         let property = message.property;
         let mut in_flight_target = None;
         if let Some(in_flight) = self.in_flight.get(&property)
-            && !in_flight.handle.is_finished() {
-                in_flight_target = Some(in_flight.target);
-            }
+            && !in_flight.handle.is_finished()
+        {
+            in_flight_target = Some(in_flight.target);
+        }
         let actual = match get_property(&self.proxy, &property).await {
             Ok(value) => value,
             Err(e) => return Err(format!("Error fetching current {property}: {e}")),
         };
         let reference = in_flight_target.unwrap_or(actual);
-        Ok(reference.to_string())
+        Ok(format!("{reference:.0$}", message.round as usize))
     }
 
     async fn stop(&mut self) {
