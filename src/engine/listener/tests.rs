@@ -5,39 +5,145 @@ use tokio::{io::AsyncReadExt, sync::mpsc, time::timeout};
 use super::*;
 use crate::message::{GammaRelayProperty, ShiftMessage, TargetValue};
 
-#[tokio::test]
-async fn shift_round_trip_preserves_id_and_returns_coordinator_response() {
+fn shift_message() -> Message {
+    let start = chrono::Local::now();
+    Message::Shift(ShiftMessage {
+        property: GammaRelayProperty::Temperature,
+        id: "example".into(),
+        target: TargetValue::Relative(500.0),
+        step_duration: Duration::from_millis(10),
+        start,
+        end: start,
+    })
+}
+
+async fn with_listener(
+    message: Message,
+    test: impl AsyncFnOnce(&mut UnixStream, &mut mpsc::Receiver<Instruction>),
+) {
     timeout(Duration::from_secs(5), async {
         let (mut client, server) = UnixStream::pair().unwrap();
         let address = server.peer_addr().unwrap();
         let (tx, mut rx) = mpsc::channel(1);
         handle_accept(Ok((server, address)), tx).await;
-        let start = chrono::Local::now();
-        let message = Message::Shift(ShiftMessage {
-            property: GammaRelayProperty::Temperature,
-            id: "example".into(),
-            target: TargetValue::Relative(500.0),
-            step_duration: Duration::from_millis(10),
-            start,
-            end: start,
-        });
         client
             .write_all(&serde_json::to_vec(&message).unwrap())
             .await
             .unwrap();
         client.shutdown().await.unwrap();
-        let Some(Instruction::Shift { message, reply }) = rx.recv().await else {
+        test(&mut client, &mut rx).await;
+    })
+    .await
+    .expect("listener test timed out");
+}
+
+async fn read_response(client: &mut UnixStream) -> String {
+    let mut response = String::new();
+    client.read_to_string(&mut response).await.unwrap();
+    response
+}
+
+#[tokio::test]
+async fn shift_forwards_the_message_to_the_coordinator() {
+    let expected = serde_json::to_value(shift_message()).unwrap();
+    let message = serde_json::from_value(expected.clone()).unwrap();
+    with_listener(message, async |client, instructions| {
+        let Some(Instruction::Shift { message, reply }) = instructions.recv().await else {
             panic!("expected a shift instruction");
         };
-        assert_eq!(message.id, "example");
-        assert!(matches!(message.target, TargetValue::Relative(500.0)));
+
+        assert_eq!(
+            serde_json::to_value(Message::Shift(message)).unwrap(),
+            expected
+        );
+        reply.send(String::new()).unwrap();
+        read_response(client).await;
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn shift_returns_the_coordinator_response() {
+    with_listener(shift_message(), async |client, instructions| {
+        let Some(Instruction::Shift { reply, .. }) = instructions.recv().await else {
+            panic!("expected a shift instruction");
+        };
+
         reply
             .send("Shifting Temperature: 4000 -> 4500".into())
             .unwrap();
-        let mut response = String::new();
-        client.read_to_string(&mut response).await.unwrap();
-        assert_eq!(response, "Shifting Temperature: 4000 -> 4500");
+
+        assert_eq!(
+            read_response(client).await,
+            "Shifting Temperature: 4000 -> 4500"
+        );
     })
+    .await;
+}
+
+#[tokio::test]
+async fn shift_returns_the_coordinator_error() {
+    with_listener(shift_message(), async |client, instructions| {
+        let Some(Instruction::Shift { reply, .. }) = instructions.recv().await else {
+            panic!("expected a shift instruction");
+        };
+
+        reply
+            .send("Nothing to undo for Temperature".into())
+            .unwrap();
+
+        assert_eq!(
+            read_response(client).await,
+            "Nothing to undo for Temperature"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn stop_forwards_the_instruction_and_returns_the_coordinator_response() {
+    with_listener(Message::Stop, async |client, instructions| {
+        let Some(Instruction::Stop { reply }) = instructions.recv().await else {
+            panic!("expected a stop instruction");
+        };
+
+        reply.send("Shutting down".into()).unwrap();
+
+        assert_eq!(read_response(client).await, "Shutting down");
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn unavailable_coordinator_returns_an_error() {
+    let (tx, rx) = mpsc::channel(1);
+    drop(rx);
+    let (reply, response) = oneshot::channel();
+
+    let result = timeout(
+        Duration::from_secs(5),
+        coordinator_reponse_or_err(&tx, Instruction::Stop { reply }, response),
+    )
     .await
-    .expect("listener round trip timed out");
+    .unwrap();
+
+    assert_eq!(result, "Error: coordinator unavailable");
+}
+
+#[tokio::test]
+async fn dropped_coordinator_reply_returns_an_error() {
+    with_listener(Message::Stop, async |client, instructions| {
+        let Some(Instruction::Stop { reply }) = instructions.recv().await else {
+            panic!("expected a stop instruction");
+        };
+
+        drop(reply);
+
+        assert!(
+            read_response(client)
+                .await
+                .starts_with("Error: coordinator stopped")
+        );
+    })
+    .await;
 }
