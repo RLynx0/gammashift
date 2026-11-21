@@ -5,7 +5,10 @@ use tokio::time::sleep;
 
 use crate::gamma_relay_interface::{GammaRelayInterfaceProxy, set_property};
 use crate::message::{GammaRelayProperty, ShiftMessage, TargetValue};
-use crate::{DEFAULT_BRIGHTNESS, DEFAULT_GAMMA, DEFAULT_TEMPERATURE};
+use crate::{
+    DEFAULT_BRIGHTNESS, DEFAULT_GAMMA, DEFAULT_TEMPERATURE, MAX_BRIGHTNESS, MAX_GAMMA,
+    MAX_TEMPERATURE, MIN_BRIGHTNESS, MIN_GAMMA, MIN_TEMPERATURE,
+};
 
 #[cfg(test)]
 mod tests;
@@ -40,6 +43,11 @@ pub(super) fn plan_shift(
             GammaRelayProperty::Brightness => DEFAULT_BRIGHTNESS,
             GammaRelayProperty::Gamma => DEFAULT_GAMMA,
         },
+    };
+    let target = match property {
+        GammaRelayProperty::Temperature => target.clamp(MIN_TEMPERATURE, MAX_TEMPERATURE),
+        GammaRelayProperty::Brightness => target.clamp(MIN_BRIGHTNESS, MAX_BRIGHTNESS),
+        GammaRelayProperty::Gamma => target.clamp(MIN_GAMMA, MAX_GAMMA),
     };
     Ok(ShiftRecord { reference, target })
 }
