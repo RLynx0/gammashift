@@ -10,6 +10,7 @@ use super::{
     shift::{ShiftId, ShiftRecord, plan_shift, run_ramp},
 };
 use crate::{
+    MAX_BRIGHTNESS, MAX_GAMMA, MAX_TEMPERATURE, MIN_BRIGHTNESS, MIN_GAMMA, MIN_TEMPERATURE,
     gamma_relay_interface::{GammaRelayInterfaceProxy, get_property},
     message::{GammaRelayProperty, GetMessage, ShiftMessage, TargetValue},
 };
@@ -111,6 +112,16 @@ impl Coordinator {
             Err(e) => return Err(format!("Error fetching current {property}: {e}")),
         };
         let reference = in_flight_target.unwrap_or(actual);
+        let reference = match (message.proportion, message.property) {
+            (true, GammaRelayProperty::Temperature) => {
+                (reference - MIN_TEMPERATURE) / (MAX_TEMPERATURE - MIN_TEMPERATURE)
+            }
+            (true, GammaRelayProperty::Brightness) => {
+                (reference - MIN_BRIGHTNESS) / (MAX_BRIGHTNESS - MIN_BRIGHTNESS)
+            }
+            (true, GammaRelayProperty::Gamma) => (reference - MIN_GAMMA) / (MAX_GAMMA - MIN_GAMMA),
+            (false, _) => reference,
+        };
         Ok(format!("{reference:.0$}", message.round as usize))
     }
 

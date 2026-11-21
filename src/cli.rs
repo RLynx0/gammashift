@@ -87,6 +87,12 @@ pub struct GetOptions {
     /// Round output to a number of digits after the decimal point.
     #[arg(short, long, default_value = "2")]
     pub round: u8,
+
+    /// Return the output as a proportion between the min and max value property.
+    ///
+    /// Note: Gamma has no maximum value and will always return 0.
+    #[arg(short, long)]
+    pub proportion: bool,
 }
 
 #[derive(Debug, Clone, ValueEnum)]

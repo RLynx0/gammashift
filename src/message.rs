@@ -60,12 +60,14 @@ impl From<&cli::ShiftOptions> for ShiftMessage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetMessage {
     pub property: GammaRelayProperty,
+    pub proportion: bool,
     pub round: u8,
 }
 impl From<&cli::GetOptions> for GetMessage {
     fn from(opts: &cli::GetOptions) -> Self {
         GetMessage {
             round: opts.round,
+            proportion: opts.proportion,
             property: match opts.property {
                 cli::GammaRelayProperty::Temperature => GammaRelayProperty::Temperature,
                 cli::GammaRelayProperty::Brightness => GammaRelayProperty::Brightness,
